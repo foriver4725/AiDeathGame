@@ -11,6 +11,17 @@ namespace MyScripts
         [SerializeField] private Canvas talkCanvas;
         [SerializeField] private TextMeshProUGUI talkText;
 
+        // LayoutGroupObject
+        [SerializeField] private Transform talkContentRoot;
+
+        // 吹き出しプレハブ（緑=プレイヤー、白=相手）
+        [SerializeField] private GameObject playerBubblePrefab;
+        [SerializeField] private GameObject aiBubblePrefab;
+
+        // 自動スクロール
+        [SerializeField] private ScrollRect talkScroll;
+
+
         [SerializeField] private TextMeshProUGUI quesText;
         [SerializeField] private TMP_Dropdown ansA;
         [SerializeField] private TMP_Dropdown ansB;
@@ -76,25 +87,15 @@ namespace MyScripts
                     {
                         foreach (string talk in talkList)
                         {
-                            ulong colorHex = talk[0] switch
-                            {
-                                'A' => 0xCF3030,
-                                'B' => 0xB0CF3A,
-                                'C' => 0x3B82B9,
-                                _ => 0xFFC700
-                            };
-                            Color color = new Color32(
-                                (byte)(colorHex >> 16),
-                                (byte)(colorHex >> 8 & 0xFF),
-                                (byte)(colorHex & 0xFF),
-                                0xFF);
+                            int colon = talk.IndexOf(':');
+                            string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty;
+                            string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;
 
-                            // 最初の半角スペースより左にあるものを削除
-                            int spaceIndex = talk.IndexOf(' ');
-                            if (spaceIndex >= 0)
-                                talkText.text = talk.Substring(spaceIndex + 1);
-                            talkText.color = color;
+                            AddBubble(speaker, message);
+
+                            // 1行ずつ進めたい演出を踏襲
                             await UniTask.WaitUntil(() => Input.GetMouseButtonDown(0) || Input.touchCount > 0);
+                            
                         }
                     }
                     talkCanvas.gameObject.SetActive(false);
@@ -132,6 +133,28 @@ namespace MyScripts
             3 => "C",
             _ => string.Empty
         };
+
+        private void AddBubble(string speaker, string message)
+        {
+            bool isPlayer = speaker == "プレイヤー";
+            var prefab = isPlayer ? playerBubblePrefab : aiBubblePrefab;
+
+            var go = Instantiate(prefab, talkContentRoot, false);
+
+            // TextObject に本文を反映
+            var text = go.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (text != null)
+                text.text = message;
+
+            // レイアウト更新 & 下まで自動スクロール（任意）
+            LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)talkContentRoot);
+            if (talkScroll != null)
+            {
+                Canvas.ForceUpdateCanvases();
+                talkScroll.verticalNormalizedPosition = 0f;
+            }
+        }
+
 
         private static async UniTask BeginConvAsync(Ct ct)
         {

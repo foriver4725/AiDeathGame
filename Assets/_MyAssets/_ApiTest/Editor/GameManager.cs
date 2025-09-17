@@ -2,6 +2,13 @@
 #error "This script is intended to be used in the Unity Editor only."
 #endif
 
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+using Cysharp.Threading.Tasks;
+using Debug = UnityEngine.Debug;
+using Ct = System.Threading.CancellationToken;
+
 using MyScripts.Common;
 
 namespace MyScripts._ApiTest

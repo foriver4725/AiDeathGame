@@ -82,6 +82,8 @@ namespace MyScripts
                     // 会話データを生成させる
                     List<string> talkList = await AskForTalkListAsync(firstTalker, secondTalker, ct);
 
+                    ClearBubbles();
+
                     // 会話を再生、終わったらUIオフ
                     talkCanvas.gameObject.SetActive(true);
                     {
@@ -91,13 +93,45 @@ namespace MyScripts
                             string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty;
                             string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;
 
-                            AddBubble(speaker, message);
+                            await AddBubbleAsync(speaker, message, 0.20f);
+
+                            //Color設定
+                            ulong colorHex = talk[0] switch
+                            {
+
+                                'A' => 0x000000,
+                                'B' => 0x000000,
+                                'C' => 0x000000,
+                                _ => 0x000000
+
+                                /*
+                                'A' => 0xCF3030,
+                                'B' => 0xB0CF3A,
+                                'C' => 0x3B82B9,
+                                _ => 0xFFC700
+                                */
+                            };
+                            Color color = new Color32(
+                                (byte)(colorHex >> 16),
+                                (byte)(colorHex >> 8 & 0xFF),
+                                (byte)(colorHex & 0xFF),
+                                0xFF);
+
+                            // 最初の半角スペースより左にあるものを削除
+                            int spaceIndex = talk.IndexOf(' ');
+                            if (spaceIndex >= 0)
+                                talkText.text = talk.Substring(spaceIndex + 1);
+                            talkText.color = color;
+                            
 
                             // 1行ずつ進めたい演出を踏襲
                             await UniTask.WaitUntil(() => Input.GetMouseButtonDown(0) || Input.touchCount > 0);
                             
                         }
                     }
+
+                    ClearBubbles();
+
                     talkCanvas.gameObject.SetActive(false);
 
                     continue;
@@ -134,7 +168,7 @@ namespace MyScripts
             _ => string.Empty
         };
 
-        private void AddBubble(string speaker, string message)
+        private async UniTask AddBubbleAsync(string speaker, string message, float scrollDuration = 0.20f)
         {
             bool isPlayer = speaker == "プレイヤー";
             var prefab = isPlayer ? playerBubblePrefab : aiBubblePrefab;
@@ -146,13 +180,86 @@ namespace MyScripts
             if (text != null)
                 text.text = message;
 
-            // レイアウト更新 & 下まで自動スクロール（任意）
-            LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)talkContentRoot);
-            if (talkScroll != null)
+            if (!isPlayer && talkText != null)
             {
-                Canvas.ForceUpdateCanvases();
-                talkScroll.verticalNormalizedPosition = 0f;
+                // 上書き表示
+                talkText.text = message;
+                // テキストカラー設定
+                //text.color = GetColorForSpeaker(speaker);
+                
             }
+
+            // レイアウト更新 & 下まで自動スクロール
+            await SmoothScroll(0.20f);
+        }
+
+        private static Color32 GetColorForSpeaker(string speaker)
+        {
+            return speaker switch
+            {
+                "A" => Hex(0x000000),
+                "B" => Hex(0x000000),
+                "C" => Hex(0x000000),
+                "プレイヤー" => Hex(0x000000),
+                _ => new Color32(255, 255, 255, 255),
+            };
+        }
+        private static Color32 Hex(uint hex) 
+        {
+           return new Color32(
+                (byte)(hex >> 16),
+                (byte)((hex >> 8) & 0xFF),
+                (byte)(hex & 0xFF),
+                0xFF
+            );
+        }
+        // Bubble削除
+        private void ClearBubbles()
+        {
+            // 末尾から消すと安全
+            for (int i = talkContentRoot.childCount - 1; i >= 0; i--)
+            {
+                var child = talkContentRoot.GetChild(i);
+                Destroy(child.gameObject);
+            }
+
+            // レイアウト更新
+            LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)talkContentRoot);
+        }
+
+        // スクロール機能
+        private async UniTask SmoothScroll(float duration = 0.20f)
+        {
+            if (talkScroll == null || talkScroll.content == null) return;
+
+            // // レイアウトを確定させて高さを最新化
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)talkContentRoot);
+
+            // ScrollRect の正規化スクロール値（1=最上 / 0=最下）
+            float start = talkScroll.verticalNormalizedPosition;
+            float end = 0f;
+
+            // duration=0 や高さ不足でスクロール領域が無い場合は即時反映
+            var content = talkScroll.content;
+            var viewport = talkScroll.viewport != null ? talkScroll.viewport : (RectTransform)talkScroll.transform;
+            float contentH = content.rect.height;
+            float viewH = viewport.rect.height;
+            if (duration <= 0f || contentH <= viewH || Mathf.Approximately(start, end))
+            {
+                talkScroll.verticalNormalizedPosition = end;
+                return;
+            }
+
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.unscaledDeltaTime;
+                float u = 1f - (1f - Mathf.Clamp01(t / duration)) * (1f - Mathf.Clamp01(t / duration));
+                talkScroll.verticalNormalizedPosition = Mathf.Lerp(start, end, u);
+                await UniTask.Yield();
+            }
+            talkScroll.verticalNormalizedPosition = end;
         }
 
 

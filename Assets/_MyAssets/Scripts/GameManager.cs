@@ -1,7 +1,10 @@
 using MyScripts.Common;
+using System.Globalization;
+using System.Text;
 
 namespace MyScripts
 {
+
     public sealed class GameManager : MonoBehaviour
     {
         [SerializeField] private TMP_Dropdown convFirst;
@@ -18,9 +21,16 @@ namespace MyScripts
         [SerializeField] private GameObject playerBubblePrefab;
         [SerializeField] private GameObject aiBubblePrefab;
 
+        //吹き出し表示位置調整用余白
+        [SerializeField] private int leftEdgePadding = 8;  // 白(左寄せ)の左端余白
+        [SerializeField] private int rightEdgePadding = 8;  // 緑(右寄せ)の右端余白
+        [SerializeField] private int rowTopBottom = 4;  // 行の上下余白
+
         // 自動スクロール
         [SerializeField] private ScrollRect talkScroll;
 
+        //文字数カウント
+        [SerializeField] private int SentenceLimit = 30;
 
         [SerializeField] private TextMeshProUGUI quesText;
         [SerializeField] private TMP_Dropdown ansA;
@@ -119,10 +129,15 @@ namespace MyScripts
 
                             // 最初の半角スペースより左にあるものを削除
                             int spaceIndex = talk.IndexOf(' ');
-                            if (spaceIndex >= 0)
-                                talkText.text = talk.Substring(spaceIndex + 1);
+                            string content = spaceIndex >= 0 ? talk.Substring(spaceIndex + 1) : talk;
+
+                            // 15文字ごとに改行を追加
+                            content = InsertLineBreaks(content, SentenceLimit);
+
+                            talkText.text = content;
                             talkText.color = color;
-                            
+
+
 
                             // 1行ずつ進めたい演出を踏襲
                             await UniTask.WaitUntil(() => Input.GetMouseButtonDown(0) || Input.touchCount > 0);
@@ -170,28 +185,80 @@ namespace MyScripts
 
         private async UniTask AddBubbleAsync(string speaker, string message, float scrollDuration = 0.20f)
         {
-            bool isPlayer = speaker == "プレイヤー";
-            var prefab = isPlayer ? playerBubblePrefab : aiBubblePrefab;
+            var prefab = PickBubblePrefab(speaker);
+            bool isGreen = ReferenceEquals(prefab, playerBubblePrefab);
 
-            var go = Instantiate(prefab, talkContentRoot, false);
+            // 1行コンテナ
+            var rowGO = new GameObject("Row",
+                typeof(RectTransform),
+                typeof(HorizontalLayoutGroup),
+                typeof(LayoutElement));
+            var row = rowGO.GetComponent<RectTransform>();
+            row.SetParent(talkContentRoot, false);
 
-            // TextObject に本文を反映
-            var text = go.GetComponentInChildren<TextMeshProUGUI>(true);
-            if (text != null)
-                text.text = message;
+            // Row を親の幅いっぱいにストレッチ（最初の1個目でも中央化しない）
+            row.anchorMin = new Vector2(0f, 1f);
+            row.anchorMax = new Vector2(1f, 1f);
+            row.pivot = new Vector2(0.5f, 0.5f);
 
-            if (!isPlayer && talkText != null)
-            {
-                // 上書き表示
-                talkText.text = message;
-                // テキストカラー設定
-                //text.color = GetColorForSpeaker(speaker);
-                
-            }
+            // 左右オフセットを明示的に0へ（sizeDelta.xも0にして“ストレッチ幅”だけにする）
+            row.offsetMin = new Vector2(0f, row.offsetMin.y);
+            row.offsetMax = new Vector2(0f, row.offsetMax.y);
+            row.sizeDelta = new Vector2(0f, row.sizeDelta.y);
 
-            // レイアウト更新 & 下まで自動スクロール
-            await SmoothScroll(0.20f);
+            // 横いっぱいに広げるヒントとして LayoutElement も付与（無ければ追加）
+            var rowLE = rowGO.GetComponent<LayoutElement>() ?? rowGO.AddComponent<LayoutElement>();
+            rowLE.flexibleWidth = 1f;
+
+
+            var h = rowGO.GetComponent<HorizontalLayoutGroup>();
+            h.childControlWidth = false;   // 子の幅は子側で決める
+            h.childControlHeight = true;   // 高さは子に合わせる
+            h.childForceExpandWidth = false;    // 行幅いっぱいに使う
+            h.childForceExpandHeight = false;
+            h.spacing = 0;
+            h.padding = new RectOffset(0, 0, 4, 4);
+            h.childAlignment = isGreen ? TextAnchor.UpperRight : TextAnchor.UpperLeft;
+            
+            //余白量調整
+            h.padding = isGreen
+
+                // 右端にどれだけ余白を残すか
+                ? new RectOffset(0, rightEdgePadding, rowTopBottom, rowTopBottom)
+                // 左端にどれだけ余白を残すか
+                : new RectOffset(leftEdgePadding, 0, rowTopBottom, rowTopBottom);  
+
+            // 子はバブル１つのみ
+            var go = Instantiate(prefab, row, false);
+            SetupBubble(go, message);
+
+            // バブルが横に伸びないようFlexible指定（保険）
+            var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
+            le.flexibleWidth = 0f;
+
+            if (talkText != null) talkText.text = InsertLineBreaks(message, SentenceLimit);
+            await SmoothScroll(0.50f);
         }
+
+        // TextObjectに会話反映
+        private void SetupBubble(GameObject go, string message)
+        {
+            string formatted = InsertLineBreaks(message, SentenceLimit);
+            var text = go.GetComponentInChildren<TextMeshProUGUI>(true);
+            if (text != null) text.text = formatted;
+        }
+
+        // 横方向の可変余白（Flexible=1）を作る
+        private static void AddFlexibleSpacer(Transform parent)
+        {
+            var spacerGO = new GameObject("Spacer", typeof(RectTransform), typeof(LayoutElement));
+            spacerGO.transform.SetParent(parent, false);
+            var le = spacerGO.GetComponent<LayoutElement>();
+            le.minWidth = 0;
+            le.preferredWidth = 0;
+            le.flexibleWidth = 1f; // これが“押し出す力”
+        }
+
 
         private static Color32 GetColorForSpeaker(string speaker)
         {
@@ -261,6 +328,54 @@ namespace MyScripts
             }
             talkScroll.verticalNormalizedPosition = end;
         }
+
+
+        /// <summary>
+        /// 指定文字数ごとに改行を挿入する
+        /// </summary>
+        private string InsertLineBreaks(string text, int limit)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < text.Length; i++)
+            {
+                sb.Append(text[i]);
+                if ((i + 1) % limit == 0 && i != text.Length - 1)
+                {
+                    sb.Append('\n');
+                }
+            }
+            return sb.ToString();
+        }
+
+        //「誰が話したかの判定」を毎メッセージごとに正規化
+
+            // --- 文字列を比較しやすい形に正規化 ---
+            private static string NormalizeSpeaker(string raw)
+            {
+                if (string.IsNullOrEmpty(raw)) return string.Empty;
+
+                var s = raw.Normalize(NormalizationForm.FormKC); // 全角/半角のゆらぎ除去
+                s = s.Replace("\u3000", "");                     // 全角スペース除去
+                s = s.Trim();                                    // 前後空白除去
+                return s;
+            }
+
+            // --- 話者名→使用する吹き出しPrefab を決定　---
+            private GameObject PickBubblePrefab(string speakerName)
+            {
+                var s = NormalizeSpeaker(speakerName);
+
+                // 「プレイヤー」以外はすべてAI（A, B, C）を白に統一
+                if (s == "プレイヤー" || s.Equals("player", System.StringComparison.OrdinalIgnoreCase) || s == "P")
+                {
+                    return playerBubblePrefab; // 緑
+                }
+
+                return aiBubblePrefab; // 白
+            }
+
 
 
         private static async UniTask BeginConvAsync(Ct ct)

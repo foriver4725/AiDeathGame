@@ -29,6 +29,14 @@ namespace MyScripts
         // 自動スクロール
         [SerializeField] private ScrollRect talkScroll;
 
+        //スクロールバー関連
+        //[SerializeField] private ScrollRect scrollRect;   // Scroll Area の ScrollRect
+        //[SerializeField] private RectTransform content;   // Content（旧 LayoutGroupObject）
+        //[SerializeField] private GameObject rowPrefab;    // 1 行分（Row をルートにした Prefab）
+        //[SerializeField] private int seedCount = 20;      // テスト用・最初に作る行数
+
+
+
         //文字数カウント
         [SerializeField] private int SentenceLimit = 30;
 
@@ -134,8 +142,8 @@ namespace MyScripts
                             // 15文字ごとに改行を追加
                             content = InsertLineBreaks(content, SentenceLimit);
 
-                            talkText.text = content;
-                            talkText.color = color;
+                            //talkText.text = content;
+                            //talkText.color = color;
 
 
 
@@ -236,7 +244,7 @@ namespace MyScripts
             var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
             le.flexibleWidth = 0f;
 
-            if (talkText != null) talkText.text = InsertLineBreaks(message, SentenceLimit);
+            //if (talkText != null) talkText.text = InsertLineBreaks(message, SentenceLimit);
             await SmoothScroll(0.50f);
         }
 

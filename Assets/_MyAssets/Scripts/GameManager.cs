@@ -29,14 +29,6 @@ namespace MyScripts
         // 自動スクロール
         [SerializeField] private ScrollRect talkScroll;
 
-        //スクロールバー関連
-        //[SerializeField] private ScrollRect scrollRect;   // Scroll Area の ScrollRect
-        //[SerializeField] private RectTransform content;   // Content（旧 LayoutGroupObject）
-        //[SerializeField] private GameObject rowPrefab;    // 1 行分（Row をルートにした Prefab）
-        //[SerializeField] private int seedCount = 20;      // テスト用・最初に作る行数
-
-
-
         //文字数カウント
         [SerializeField] private int SentenceLimit = 30;
 
@@ -45,6 +37,21 @@ namespace MyScripts
         [SerializeField] private TMP_Dropdown ansB;
         [SerializeField] private TMP_Dropdown ansC;
         [SerializeField] private Button ansSubmit;
+
+        // Icon画像
+        [System.Serializable]
+        public struct SpeakerIcon
+        {
+            public string speaker;   // 会話者
+            public Sprite sprite;    // 会話者アイコン
+        }
+
+        [Header("Icon Settings")]
+        [SerializeField] private List<SpeakerIcon> iconTable;
+        [SerializeField] private Sprite defaultIcon;           // 見つからない時の代替Icon
+        [SerializeField] private int iconSize = 64;            // 表示サイズ(px)
+        private Dictionary<string, Sprite> iconMap;
+
 
         private readonly List<string> answerOptions = new(8);
 
@@ -207,7 +214,7 @@ namespace MyScripts
             // Row を親の幅いっぱいにストレッチ（最初の1個目でも中央化しない）
             row.anchorMin = new Vector2(0f, 1f);
             row.anchorMax = new Vector2(1f, 1f);
-            row.pivot = new Vector2(0.5f, 0.5f);
+            row.pivot = new Vector2(0.5f, 1f);
 
             // 左右オフセットを明示的に0へ（sizeDelta.xも0にして“ストレッチ幅”だけにする）
             row.offsetMin = new Vector2(0f, row.offsetMin.y);
@@ -224,28 +231,54 @@ namespace MyScripts
             h.childControlHeight = true;   // 高さは子に合わせる
             h.childForceExpandWidth = false;    // 行幅いっぱいに使う
             h.childForceExpandHeight = false;
-            h.spacing = 0;
-            h.padding = new RectOffset(0, 0, 4, 4);
-            h.childAlignment = isGreen ? TextAnchor.UpperRight : TextAnchor.UpperLeft;
-            
-            //余白量調整
-            h.padding = isGreen
+            h.spacing = 8;
 
-                // 右端にどれだけ余白を残すか
-                ? new RectOffset(0, rightEdgePadding, rowTopBottom, rowTopBottom)
-                // 左端にどれだけ余白を残すか
-                : new RectOffset(leftEdgePadding, 0, rowTopBottom, rowTopBottom);  
+            // 左右エッジ余白をスピーカーで出し分け
+            h.padding = new RectOffset(
+                 isGreen ? 0 : leftEdgePadding,
+                 isGreen ? rightEdgePadding : 0,
+                 rowTopBottom, rowTopBottom
+            );
 
-            // 子はバブル１つのみ
-            var go = Instantiate(prefab, row, false);
-            SetupBubble(go, message);
 
-            // バブルが横に伸びないようFlexible指定（保険）
-            var le = go.GetComponent<LayoutElement>() ?? go.AddComponent<LayoutElement>();
-            le.flexibleWidth = 0f;
+            // Icon を Row の直下に生成（Bubbleと並列）
+            var iconGO = new GameObject("Icon", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+            var iconRt = iconGO.GetComponent<RectTransform>();
+            iconRt.SetParent(row, false);
+            iconRt.sizeDelta = new Vector2(iconSize, iconSize);
+            var iconImg = iconGO.GetComponent<Image>();
+            iconImg.preserveAspect = true;
+            iconImg.raycastTarget = false;
+            iconImg.sprite = ResolveIcon(speaker);                 // 会話者→画像
+            var iconLE = iconGO.GetComponent<LayoutElement>();
+            iconLE.preferredWidth = iconSize;
+            iconLE.preferredHeight = iconSize;
+            iconLE.flexibleWidth = 0;
+
+            // BubbleをRowの子として生成
+            var bubble = Instantiate(prefab, row, false);
+            SetupBubble(bubble, message);
+            // Bubbleが横に伸びないようFlexible指定
+            var bubbleLE = bubble.GetComponent<LayoutElement>() ?? bubble.AddComponent<LayoutElement>();
+            bubbleLE.flexibleWidth = 0f;
+
+
+            // 左右に応じて“並び順”と寄せ方向を決める
+            if (isGreen)
+            {
+                h.childAlignment = TextAnchor.UpperRight;
+                iconRt.SetSiblingIndex(row.childCount - 1);        // 右寄せ: [Bubble][Icon]
+            }
+            else
+            {
+                h.childAlignment = TextAnchor.UpperLeft;
+                iconRt.SetSiblingIndex(0);                         // 左寄せ: [Icon][Bubble]
+            }
+
+
 
             //if (talkText != null) talkText.text = InsertLineBreaks(message, SentenceLimit);
-            await SmoothScroll(0.50f);
+            await SmoothScroll(scrollDuration);
         }
 
         // TextObjectに会話反映
@@ -266,6 +299,9 @@ namespace MyScripts
             le.preferredWidth = 0;
             le.flexibleWidth = 1f; // これが“押し出す力”
         }
+
+
+
 
 
         private static Color32 GetColorForSpeaker(string speaker)
@@ -359,7 +395,7 @@ namespace MyScripts
 
         //「誰が話したかの判定」を毎メッセージごとに正規化
 
-            // --- 文字列を比較しやすい形に正規化 ---
+            // 文字列を比較しやすい形に正規化
             private static string NormalizeSpeaker(string raw)
             {
                 if (string.IsNullOrEmpty(raw)) return string.Empty;
@@ -370,7 +406,7 @@ namespace MyScripts
                 return s;
             }
 
-            // --- 話者名→使用する吹き出しPrefab を決定　---
+            // 話者名→使用する吹き出しPrefab を決定
             private GameObject PickBubblePrefab(string speakerName)
             {
                 var s = NormalizeSpeaker(speakerName);
@@ -383,6 +419,30 @@ namespace MyScripts
 
                 return aiBubblePrefab; // 白
             }
+
+        private void Awake() 
+        {
+            // アイコンのルックアップを作成
+            iconMap = new Dictionary<string, Sprite>();
+            if (iconTable != null)
+            {
+                foreach (var e in iconTable)
+                {
+                    if (!string.IsNullOrEmpty(e.speaker) && e.sprite != null)
+                    {
+                        iconMap[e.speaker] = e.sprite;
+                    }
+                }
+            }
+        }
+
+        // Icon取得
+        private Sprite ResolveIcon(string speaker) 
+        {
+            if (!string.IsNullOrEmpty(speaker) && iconMap != null && iconMap.TryGetValue(speaker, out var s))
+                return s;
+            return defaultIcon;
+        }
 
 
 

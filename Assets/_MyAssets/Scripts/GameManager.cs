@@ -38,6 +38,13 @@ namespace MyScripts
         [SerializeField] private TMP_Dropdown ansC;
         [SerializeField] private Button ansSubmit;
 
+        // Player会話
+        [SerializeField] private TMP_InputField playerInputField;  // プレイヤーが入力する欄
+        [SerializeField] private Button playerSendButton;          // プレイヤーが送信するボタン
+
+        // 戻るボタン
+        [SerializeField] private Button backButton;
+
         // Icon画像
         [System.Serializable]
         public struct SpeakerIcon
@@ -112,13 +119,55 @@ namespace MyScripts
                     // 会話を再生、終わったらUIオフ
                     talkCanvas.gameObject.SetActive(true);
                     {
-                        foreach (string talk in talkList)
+                        for (int i = 0; i < talkList.Count; i++) // プレイヤー発言の直後に「次の話者」を参照できるようにするため、添字付きループ
                         {
-                            int colon = talk.IndexOf(':');
-                            string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty;
-                            string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;
+                            string talk = talkList[i];                                 // その回の台本行を取得
+                            int colon = talk.IndexOf(':');                              // 「話者: 内容」を分割するコロン位置を探す
+                            string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty; // 話者名（A/B/C/プレイヤー）を取り出す
+                            string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;       // 台詞本文を取り出す
 
-                            await AddBubbleAsync(speaker, message, 0.20f);
+                            if (speaker == "プレイヤー")                                              // プレイヤーの番なら入力UI表示
+                            {
+                                playerInputField.gameObject.SetActive(true);                            // 入力欄を表示
+                                playerSendButton.gameObject.SetActive(true);                            // 送信ボタンを表示
+                                await playerSendButton.OnClickAsync(ct);                                // 送信されるまで待機
+                                string playerMessage = playerInputField.text;                           // 入力テキスト取得
+                                playerInputField.text = string.Empty;                                   // 入力欄をリセット
+                                await AddBubbleAsync("プレイヤー", playerMessage, 0.20f);               // プレイヤーの吹き出しを表示
+
+                                // 次の行の予定話者に答えさせる
+                                string nextSpeaker = "A";                                               // フォールバック（最後の行などに備えてAを初期値）
+                                if (i + 1 < talkList.Count)                                             // 次の行が存在するかチェック
+                                {
+                                    string nextLine = talkList[i + 1];                                  // 次の台本行を参照
+                                    int c2 = nextLine.IndexOf(':');                                     // 次の行のコロン位置
+                                    if (c2 >= 0) nextSpeaker = nextLine.Substring(0, c2).Trim();        // 次の行の話者名を抽出（A/B/C想定）
+                                    i++;                                                                // 台本のその行は“差し替え”るのでスキップ
+                                }
+
+                                // APIへ「nextSpeaker として1行だけ返答せよ」という指示を送る
+                                string rolePrompt =
+                                    $"### 指示\n" +                                                     // 役割を明示するプロンプトを組み立て
+                                    $"あなたは今から「{nextSpeaker}」として日本語で1行だけ返答します。\n" + 　// 返答者の役割を固定
+                                    $"出力形式は次の1行のみ：\n" +                                       　// 出力形式を厳格に指定
+                                    $"{nextSpeaker}: {{返答}} :ONE-END\n\n" +                            // パースしやすい目印を付ける
+                                    $"### プレイヤーの質問\n{playerMessage}";                           // プレイヤーの質問本文を添付
+
+                                (bool ok, string raw) = await ApiHandler.AskAsync(rolePrompt, ct);      // 役割固定プロンプトでAPI呼び出し
+
+                                if (ok)                                                                  // 正常に返ってきたときだけ表示
+                                {
+                                    string aiReply = ExtractRoleLine(raw, nextSpeaker);                 // "X: 本文 :ONE-END" から本文だけを抽出
+                                    await AddBubbleAsync(nextSpeaker, aiReply, 0.20f);                   // A/B/C の吹き出しで出力
+                                }
+
+                                playerInputField.gameObject.SetActive(false);                           // 入力欄を隠す
+                                playerSendButton.gameObject.SetActive(false);                           // 送信ボタンを隠す
+                            }
+                            else
+                            {
+                                await AddBubbleAsync(speaker, message, 0.20f);                           // A/B/C 等の通常行はそのまま表示
+                            }
 
                             //Color設定
                             ulong colorHex = talk[0] switch
@@ -393,10 +442,30 @@ namespace MyScripts
             return sb.ToString();
         }
 
+        private static string ExtractRoleLine(string raw, string role)                 // 役割付き1行出力から本文だけを抜き出す
+        {
+            if (string.IsNullOrEmpty(raw)) return string.Empty;                        // 空なら空を返す
+            string s = raw.Trim('`').Trim();                                           // 不要な囲みや空白を除去
+            string head = role + ":";                                                  // 先頭印（例: "A:"）
+            int p = s.IndexOf(head, StringComparison.Ordinal);                         // "A:" の開始位置
+            if (p >= 0)                                                                
+            {
+                int bodyStart = p + head.Length;                                       // 本文の開始位置
+                int end = s.IndexOf(":ONE-END", bodyStart, StringComparison.Ordinal);  // 終端マーカーを探す
+                string body = (end >= 0) ? s.Substring(bodyStart, end - bodyStart)     // 本文だけを取り出す
+                                         : s.Substring(bodyStart);
+                return body.Trim();                                                    // 前後空白を削って返す
+            }
+
+            return s;                                                                  // 想定外形式のときは全体を返す
+        }
+
+
+
         //「誰が話したかの判定」を毎メッセージごとに正規化
 
-            // 文字列を比較しやすい形に正規化
-            private static string NormalizeSpeaker(string raw)
+        // 文字列を比較しやすい形に正規化
+        private static string NormalizeSpeaker(string raw)
             {
                 if (string.IsNullOrEmpty(raw)) return string.Empty;
 
@@ -433,6 +502,11 @@ namespace MyScripts
                         iconMap[e.speaker] = e.sprite;
                     }
                 }
+            }
+
+            if (backButton != null)
+            {
+                backButton.onClick.AddListener(() => SceneId.Select.LoadAsync());
             }
         }
 
@@ -527,7 +601,9 @@ namespace MyScripts
                 ```
 
                 ### 出力する際の重要事項
-                必ず「出力フォーマット」の項で与えられた形式で出力し、それ以外のいかなるメッセージ・文字列・文字も、出力しないでください。
+                必ず「出力フォーマット」の項で与えられた形式で出力してください。
+                それ以外の文章、説明、補足、エラー文、会話の前置きや後書きなどは
+                一切出力してはいけません。
                 この条件は、本セッションの意義に関わる非常に重要な内容であり、いかなる状況においても遵守されるべきです。
                 また、出力フォーマットの記述内容は、必ず「```」で囲まれています。
                 これは出力する文字列の両端を明確に定義するためのものであり、従ってこの囲み文字を出力内容に含める必要はありません。

@@ -1,6 +1,7 @@
 using MyScripts.Common;
 using System.Globalization;
 using System.Text;
+using UnityEngine.EventSystems;
 
 namespace MyScripts
 {
@@ -44,6 +45,7 @@ namespace MyScripts
 
         // 戻るボタン
         [SerializeField] private Button backButton;
+        private Cts _talkCts;                           // 会話再生専用のキャンセル用スイッチ
 
         // Icon画像
         [System.Serializable]
@@ -116,96 +118,131 @@ namespace MyScripts
 
                     ClearBubbles();
 
+                    _talkCts?.Cancel();                             // 進行中があれば一旦停止
+                    _talkCts?.Dispose();                            // リソース破棄
+                    _talkCts = new Cts();
+
                     // 会話を再生、終わったらUIオフ
                     talkCanvas.gameObject.SetActive(true);
                     {
-                        for (int i = 0; i < talkList.Count; i++) // プレイヤー発言の直後に「次の話者」を参照できるようにするため、添字付きループ
+                        try
                         {
-                            string talk = talkList[i];                                 // その回の台本行を取得
-                            int colon = talk.IndexOf(':');                              // 「話者: 内容」を分割するコロン位置を探す
-                            string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty; // 話者名（A/B/C/プレイヤー）を取り出す
-                            string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;       // 台詞本文を取り出す
-
-                            if (speaker == "プレイヤー")                                              // プレイヤーの番なら入力UI表示
+                            for (int i = 0; i < talkList.Count; i++) // プレイヤー発言の直後に「次の話者」を参照できるようにするため、添字付きループ
                             {
-                                playerInputField.gameObject.SetActive(true);                            // 入力欄を表示
-                                playerSendButton.gameObject.SetActive(true);                            // 送信ボタンを表示
-                                await playerSendButton.OnClickAsync(ct);                                // 送信されるまで待機
-                                string playerMessage = playerInputField.text;                           // 入力テキスト取得
-                                playerInputField.text = string.Empty;                                   // 入力欄をリセット
-                                await AddBubbleAsync("プレイヤー", playerMessage, 0.20f);               // プレイヤーの吹き出しを表示
+                                string talk = talkList[i];                                 // その回の台本行を取得
+                                int colon = talk.IndexOf(':');                              // 「話者: 内容」を分割するコロン位置を探す
+                                string speaker = colon >= 0 ? talk.Substring(0, colon).Trim() : string.Empty; // 話者名（A/B/C/プレイヤー）を取り出す
+                                string message = colon >= 0 ? talk.Substring(colon + 1).Trim() : talk;       // 台詞本文を取り出す
 
-                                // 次の行の予定話者に答えさせる
-                                string nextSpeaker = "A";                                               // フォールバック（最後の行などに備えてAを初期値）
-                                if (i + 1 < talkList.Count)                                             // 次の行が存在するかチェック
+                                if (speaker == "プレイヤー")                                              // プレイヤーの番なら入力UI表示
                                 {
-                                    string nextLine = talkList[i + 1];                                  // 次の台本行を参照
-                                    int c2 = nextLine.IndexOf(':');                                     // 次の行のコロン位置
-                                    if (c2 >= 0) nextSpeaker = nextLine.Substring(0, c2).Trim();        // 次の行の話者名を抽出（A/B/C想定）
-                                    i++;                                                                // 台本のその行は“差し替え”るのでスキップ
+                                    playerInputField.gameObject.SetActive(true);                            // 入力欄を表示
+                                    playerSendButton.gameObject.SetActive(true);                            // 送信ボタンを表示
+                                    var es = EventSystem.current;                                           // EventSystem を取得
+                                    bool prevNav = true;                                                    // 元の設定を退避
+                                    if (es != null)
+                                    {
+                                        prevNav = es.sendNavigationEvents;                                   // 現在のナビゲーション有効/無効フラグを保存
+                                        es.sendNavigationEvents = false;                                     // Submit/Tab 等のナビゲーション入力を全停止
+                                        es.SetSelectedGameObject(playerInputField.gameObject);               // 選択対象を入力欄に固定
+                                        playerInputField.ActivateInputField();
+                                    }
+
+                                    try
+                                    {
+                                        var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct, _talkCts.Token); // 戻るでも中断できるよう結合トークンを作成
+                                        await playerSendButton.OnClickAsync(linked.Token);
+                                        linked.Dispose(); // 作成した結合トークンを破棄
+                                    }
+                                    finally
+                                    {
+                                        if (es != null) es.sendNavigationEvents = prevNav; // 既存の復元はそのまま
+                                    }
+
+                                    string playerMessage = playerInputField.text;                           // 入力テキスト取得
+                                    playerInputField.text = string.Empty;                                   // 入力欄をリセット
+                                    await AddBubbleAsync("プレイヤー", playerMessage, 0.20f);               // プレイヤーの吹き出しを表示
+
+                                    // 次の行の予定話者に答えさせる
+                                    string nextSpeaker = "A";                                               // フォールバック（最後の行などに備えてAを初期値）
+                                    if (i + 1 < talkList.Count)                                             // 次の行が存在するかチェック
+                                    {
+                                        string nextLine = talkList[i + 1];                                  // 次の台本行を参照
+                                        int c2 = nextLine.IndexOf(':');                                     // 次の行のコロン位置
+                                        if (c2 >= 0) nextSpeaker = nextLine.Substring(0, c2).Trim();        // 次の行の話者名を抽出（A/B/C想定）
+                                        i++;                                                                // 台本のその行は“差し替え”るのでスキップ
+                                    }
+
+                                    // APIへ「nextSpeaker として1行だけ返答せよ」という指示を送る
+                                    string rolePrompt =
+                                        $"### 指示\n" +                                                     // 役割を明示するプロンプトを組み立て
+                                        $"あなたは今から「{nextSpeaker}」として日本語で1行だけ返答します。\n" +  // 返答者の役割を固定
+                                        $"出力形式は次の1行のみ：\n" +                                        // 出力形式を厳格に指定
+                                        $"{nextSpeaker}: {{返答}} :ONE-END\n\n" +                            // パースしやすい目印を付ける
+                                        $"### プレイヤーの質問\n{playerMessage}";                           // プレイヤーの質問本文を添付
+
+                                    (bool ok, string raw) = await ApiHandler.AskAsync(rolePrompt, ct);      // 役割固定プロンプトでAPI呼び出し
+
+                                    if (ok)                                                                  // 正常に返ってきたときだけ表示
+                                    {
+                                        string aiReply = ExtractRoleLine(raw, nextSpeaker);                 // "X: 本文 :ONE-END" から本文だけを抽出
+                                        await AddBubbleAsync(nextSpeaker, aiReply, 0.20f);                   // A/B/C の吹き出しで出力
+                                    }
+
+                                    playerInputField.gameObject.SetActive(false);                           // 入力欄を隠す
+                                    playerSendButton.gameObject.SetActive(false);                           // 送信ボタンを隠す
+                                }
+                                else
+                                {
+                                    await AddBubbleAsync(speaker, message, 0.20f);                           // A/B/C 等の通常行はそのまま表示
                                 }
 
-                                // APIへ「nextSpeaker として1行だけ返答せよ」という指示を送る
-                                string rolePrompt =
-                                    $"### 指示\n" +                                                     // 役割を明示するプロンプトを組み立て
-                                    $"あなたは今から「{nextSpeaker}」として日本語で1行だけ返答します。\n" + 　// 返答者の役割を固定
-                                    $"出力形式は次の1行のみ：\n" +                                       　// 出力形式を厳格に指定
-                                    $"{nextSpeaker}: {{返答}} :ONE-END\n\n" +                            // パースしやすい目印を付ける
-                                    $"### プレイヤーの質問\n{playerMessage}";                           // プレイヤーの質問本文を添付
-
-                                (bool ok, string raw) = await ApiHandler.AskAsync(rolePrompt, ct);      // 役割固定プロンプトでAPI呼び出し
-
-                                if (ok)                                                                  // 正常に返ってきたときだけ表示
+                                //Color設定
+                                ulong colorHex = talk[0] switch
                                 {
-                                    string aiReply = ExtractRoleLine(raw, nextSpeaker);                 // "X: 本文 :ONE-END" から本文だけを抽出
-                                    await AddBubbleAsync(nextSpeaker, aiReply, 0.20f);                   // A/B/C の吹き出しで出力
-                                }
 
-                                playerInputField.gameObject.SetActive(false);                           // 入力欄を隠す
-                                playerSendButton.gameObject.SetActive(false);                           // 送信ボタンを隠す
+                                    'A' => 0x000000,
+                                    'B' => 0x000000,
+                                    'C' => 0x000000,
+                                    _ => 0x000000
+
+                                    /*
+                                    'A' => 0xCF3030,
+                                    'B' => 0xB0CF3A,
+                                    'C' => 0x3B82B9,
+                                    _ => 0xFFC700
+                                    */
+                                };
+                                Color color = new Color32(
+                                    (byte)(colorHex >> 16),
+                                    (byte)(colorHex >> 8 & 0xFF),
+                                    (byte)(colorHex & 0xFF),
+                                    0xFF);
+
+                                // 最初の半角スペースより左にあるものを削除
+                                int spaceIndex = talk.IndexOf(' ');
+                                string content = spaceIndex >= 0 ? talk.Substring(spaceIndex + 1) : talk;
+
+                                // 15文字ごとに改行を追加
+                                content = InsertLineBreaks(content, SentenceLimit);
+
+                                //talkText.text = content;
+                                //talkText.color = color;
+
+
+
+                                // 1行ずつ進めたい演出を踏襲
+                                await UniTask.WaitUntil(
+                                    () => Input.GetMouseButtonDown(0) || Input.touchCount > 0,
+                                    cancellationToken: _talkCts.Token // 戻るで中断
+                                );
+
                             }
-                            else
-                            {
-                                await AddBubbleAsync(speaker, message, 0.20f);                           // A/B/C 等の通常行はそのまま表示
-                            }
+                        }
 
-                            //Color設定
-                            ulong colorHex = talk[0] switch
-                            {
-
-                                'A' => 0x000000,
-                                'B' => 0x000000,
-                                'C' => 0x000000,
-                                _ => 0x000000
-
-                                /*
-                                'A' => 0xCF3030,
-                                'B' => 0xB0CF3A,
-                                'C' => 0x3B82B9,
-                                _ => 0xFFC700
-                                */
-                            };
-                            Color color = new Color32(
-                                (byte)(colorHex >> 16),
-                                (byte)(colorHex >> 8 & 0xFF),
-                                (byte)(colorHex & 0xFF),
-                                0xFF);
-
-                            // 最初の半角スペースより左にあるものを削除
-                            int spaceIndex = talk.IndexOf(' ');
-                            string content = spaceIndex >= 0 ? talk.Substring(spaceIndex + 1) : talk;
-
-                            // 15文字ごとに改行を追加
-                            content = InsertLineBreaks(content, SentenceLimit);
-
-                            //talkText.text = content;
-                            //talkText.color = color;
-
-
-
-                            // 1行ずつ進めたい演出を踏襲
-                            await UniTask.WaitUntil(() => Input.GetMouseButtonDown(0) || Input.touchCount > 0);
-                            
+                        catch (OperationCanceledException) // 戻るによる中断を想定
+                        {
+                            Debug.Log("会話再生を中断しました（戻る）。");
                         }
                     }
 
@@ -506,8 +543,50 @@ namespace MyScripts
 
             if (backButton != null)
             {
-                backButton.onClick.AddListener(() => SceneId.Select.LoadAsync());
+                backButton.onClick.RemoveAllListeners();
+                backButton.onClick.AddListener(() =>
+                {
+                    _talkCts?.Cancel();                                              // 進行中の会話待機をまとめて中断
+                    if (playerInputField != null) playerInputField.gameObject.SetActive(false); // 入力UIを隠す
+                    if (playerSendButton != null) playerSendButton.gameObject.SetActive(false); // 送信ボタンを隠す
+                    if (playerInputField != null) playerInputField.text = string.Empty;         // 入力テキストをクリア
+                    var es = EventSystem.current;                                               // 選択状態の解除
+                    if (es != null) es.SetSelectedGameObject(null);                             
+                    ClearBubbles();                         // 吹き出し全消し
+                    talkCanvas.gameObject.SetActive(false); // キャンバス非表示
+                });
             }
+
+
+            if (playerInputField != null)
+            {                                                                
+
+                playerInputField.lineType = TMP_InputField.LineType.MultiLineNewline;                       
+                playerInputField.onSubmit.RemoveAllListeners();                                             
+                playerInputField.onValidateInput += (text, index, ch) => {                                  
+                    if (ch == '\n' || ch == '\r' || ch == '\t') return '\0';                                
+
+                    return ch;                                                                              
+                };
+
+                var nav = playerInputField.navigation;                                                      // UIナビゲーション設定の取得
+
+                if (playerSendButton != null)                                           // 送信ボタンのナビゲーションを無効化
+                {
+                    var navBtn = playerSendButton.navigation;                            // 現在のナビ設定を取得
+                    navBtn.mode = Navigation.Mode.None;                                  // ナビゲーションを無効
+                    playerSendButton.navigation = navBtn;                                // 設定を反映
+                }
+
+
+                nav.mode = Navigation.Mode.None;                                                            // Tabでフォーカスを移動させない
+                playerInputField.navigation = nav;                                                          // 変更を適用
+            }
+
+
+
+
+
         }
 
         // Icon取得

@@ -10,6 +10,7 @@ using Debug = UnityEngine.Debug;
 using Ct = System.Threading.CancellationToken;
 
 using MyScripts.Common;
+using MyScripts.Component;
 
 namespace MyScripts._ApiTest
 {
@@ -19,6 +20,8 @@ namespace MyScripts._ApiTest
         [SerializeField] private Button sendButton;
         [SerializeField] private Button resetButton;
         [SerializeField] private TextMeshProUGUI convText;
+
+        [SerializeField] private View view;
 
         private void Start() => ImplAsync(destroyCancellationToken).Forget();
 

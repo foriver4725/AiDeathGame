@@ -1,4 +1,6 @@
 using MyScripts.Common;
+using MyScripts.Component;
+using MyScripts.Interface;
 using System.Globalization;
 using System.Text;
 using UnityEngine.EventSystems;
@@ -42,6 +44,8 @@ namespace MyScripts
         // Player会話
         [SerializeField] private TMP_InputField playerInputField;  // プレイヤーが入力する欄
         [SerializeField] private Button playerSendButton;          // プレイヤーが送信するボタン
+
+        [SerializeField] private View view;
 
         // 戻るボタン
         [SerializeField] private Button backButton;
@@ -136,61 +140,96 @@ namespace MyScripts
 
                                 if (speaker == "プレイヤー")                                              // プレイヤーの番なら入力UI表示
                                 {
-                                    playerInputField.gameObject.SetActive(true);                            // 入力欄を表示
-                                    playerSendButton.gameObject.SetActive(true);                            // 送信ボタンを表示
+                                    if (playerInputField != null) playerInputField.gameObject.SetActive(true);   // 入力欄を表示
+                                    if (playerSendButton != null) playerSendButton.gameObject.SetActive(true);   // 送信ボタンを表示
                                     var es = EventSystem.current;                                           // EventSystem を取得
                                     bool prevNav = true;                                                    // 元の設定を退避
                                     if (es != null)
                                     {
                                         prevNav = es.sendNavigationEvents;                                   // 現在のナビゲーション有効/無効フラグを保存
-                                        es.sendNavigationEvents = false;                                     // Submit/Tab 等のナビゲーション入力を全停止
-                                        es.SetSelectedGameObject(playerInputField.gameObject);               // 選択対象を入力欄に固定
-                                        playerInputField.ActivateInputField();
+                                        es.SetSelectedGameObject(playerInputField != null                    // 選択対象を入力欄に固定
+                                            ? playerInputField.gameObject
+                                            : null);
+                                        if (playerInputField != null) playerInputField.ActivateInputField(); // InputField にカーソルを出す
                                     }
+
+                                    // ▼ View からの「送信されました」イベントを 1 回だけ待つための準備
+                                    var tcs = new UniTaskCompletionSource<IViewData>();                      // View からの送信を待つためのTCS
+                                    // 日本語訳: 非同期で「Viewからメッセージが届くまで待つ」ための箱を用意します。
+
+                                    void OnViewSend(IViewData data)                                         // View.OnSend 用の一時ハンドラ
+                                    {
+                                        tcs.TrySetResult(data);                                             // まだ結果が入っていなければ完了させる
+                                    }
+
+                                    if (view != null) view.OnSend += OnViewSend;                            // View の OnSend イベントを購読
 
                                     try
                                     {
-                                        var linked = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(ct, _talkCts.Token); // 戻るでも中断できるよう結合トークンを作成
-                                        await playerSendButton.OnClickAsync(linked.Token);
-                                        linked.Dispose(); // 作成した結合トークンを破棄
+                                        // 戻るボタン・全体キャンセルにも対応した結合トークンを作成
+                                        var linked = System.Threading.CancellationTokenSource                // キャンセルを結合したトークンを生成
+                                            .CreateLinkedTokenSource(ct, _talkCts.Token);
+
+                                        IViewData viewData;
+                                        try
+                                        {
+                                            viewData = await tcs.Task                                       // View からの送信完了を待つ
+                                                .AttachExternalCancellation(linked.Token);
+                                        }
+                                        finally
+                                        {
+                                            linked.Dispose();                                               // 使い終わったトークンソースを破棄
+                                        }
+
+                                        if (viewData == null)                                              // 何も受け取れなかった場合
+                                        {
+                                            Debug.LogWarning("[GameManager] View から有効な入力が得られませんでした。");
+                                        }
+                                        else
+                                        {
+                                            string playerMessage = viewData.Message;                        // プレイヤーの発言本文を取得
+
+                                            await AddBubbleAsync("プレイヤー", playerMessage, 0.20f);       // プレイヤーの吹き出しを表示
+
+                                            // ▼ 次の行の予定話者に答えさせるロジックはそのまま踏襲
+                                            string nextSpeaker = "A";                                       // フォールバックとしてAを初期値に
+
+                                            if (i + 1 < talkList.Count)                                     // 次の行が存在するかチェック
+                                            {
+                                                string nextLine = talkList[i + 1];                          // 次の台本行を参照
+                                                int c2 = nextLine.IndexOf(':');                             // コロン位置を探す
+                                                if (c2 >= 0) nextSpeaker = nextLine.Substring(0, c2).Trim();// 話者名(A/B/C)を取り出す
+                                                i++;                                                        // その行は差し替え済みなのでスキップ
+                                            }
+
+                                            // APIへ「nextSpeaker として1行だけ返答せよ」という指示を送る
+                                            string rolePrompt =
+                                                $"### 指示\n" +                                            // 役割を明示するプロンプトを組み立て
+                                                $"あなたは今から「{nextSpeaker}」として日本語で1行だけ返答します。\n" +  // 返答者の役割を固定
+                                                $"出力形式は次の1行のみ：\n" +                               // 出力形式を厳格に指定
+                                                $"{nextSpeaker}: {{返答}} :ONE-END\n\n" +                   // パースしやすい目印を付ける
+                                                $"### プレイヤーの質問\n{playerMessage}";                  // プレイヤーの質問本文を添付
+
+                                            (bool ok, string raw) = await ApiHandler.AskAsync(rolePrompt, ct); // 役割固定プロンプトでAPI呼び出し
+
+                                            if (ok)                                                        // 正常に返ってきたときだけ表示
+                                            {
+                                                string aiReply = ExtractRoleLine(raw, nextSpeaker);        // "X: 本文 :ONE-END" から本文を抽出
+
+                                                await AddBubbleAsync(nextSpeaker, aiReply, 0.20f);         // A/B/C の吹き出しで出力
+                                            }
+                                        }
                                     }
                                     finally
                                     {
-                                        if (es != null) es.sendNavigationEvents = prevNav; // 既存の復元はそのまま
+                                        if (view != null) view.OnSend -= OnViewSend;                       // イベント購読を解除
+
+                                        if (es != null) es.sendNavigationEvents = prevNav;                // ナビゲーション設定を元に戻す
+
+                                        if (playerInputField != null) playerInputField.gameObject.SetActive(false); // 入力欄を隠す
+
+                                        if (playerSendButton != null) playerSendButton.gameObject.SetActive(false); // 送信ボタンを隠す
                                     }
-
-                                    string playerMessage = playerInputField.text;                           // 入力テキスト取得
-                                    playerInputField.text = string.Empty;                                   // 入力欄をリセット
-                                    await AddBubbleAsync("プレイヤー", playerMessage, 0.20f);               // プレイヤーの吹き出しを表示
-
-                                    // 次の行の予定話者に答えさせる
-                                    string nextSpeaker = "A";                                               // フォールバック（最後の行などに備えてAを初期値）
-                                    if (i + 1 < talkList.Count)                                             // 次の行が存在するかチェック
-                                    {
-                                        string nextLine = talkList[i + 1];                                  // 次の台本行を参照
-                                        int c2 = nextLine.IndexOf(':');                                     // 次の行のコロン位置
-                                        if (c2 >= 0) nextSpeaker = nextLine.Substring(0, c2).Trim();        // 次の行の話者名を抽出（A/B/C想定）
-                                        i++;                                                                // 台本のその行は“差し替え”るのでスキップ
-                                    }
-
-                                    // APIへ「nextSpeaker として1行だけ返答せよ」という指示を送る
-                                    string rolePrompt =
-                                        $"### 指示\n" +                                                     // 役割を明示するプロンプトを組み立て
-                                        $"あなたは今から「{nextSpeaker}」として日本語で1行だけ返答します。\n" +  // 返答者の役割を固定
-                                        $"出力形式は次の1行のみ：\n" +                                        // 出力形式を厳格に指定
-                                        $"{nextSpeaker}: {{返答}} :ONE-END\n\n" +                            // パースしやすい目印を付ける
-                                        $"### プレイヤーの質問\n{playerMessage}";                           // プレイヤーの質問本文を添付
-
-                                    (bool ok, string raw) = await ApiHandler.AskAsync(rolePrompt, ct);      // 役割固定プロンプトでAPI呼び出し
-
-                                    if (ok)                                                                  // 正常に返ってきたときだけ表示
-                                    {
-                                        string aiReply = ExtractRoleLine(raw, nextSpeaker);                 // "X: 本文 :ONE-END" から本文だけを抽出
-                                        await AddBubbleAsync(nextSpeaker, aiReply, 0.20f);                   // A/B/C の吹き出しで出力
-                                    }
-
-                                    playerInputField.gameObject.SetActive(false);                           // 入力欄を隠す
-                                    playerSendButton.gameObject.SetActive(false);                           // 送信ボタンを隠す
                                 }
                                 else
                                 {
@@ -583,7 +622,19 @@ namespace MyScripts
                 playerInputField.navigation = nav;                                                          // 変更を適用
             }
 
+            if (playerSendButton != null && view != null)                             // ボタンとViewの両方が設定されているか確認
+            {
+                playerSendButton.onClick.RemoveAllListeners();                        // 既存のOnClick登録を一度クリア
 
+                playerSendButton.onClick.AddListener(() =>                            // クリック時の処理を新しく登録
+                {
+                    view.OnSendToPresenter();                                         // View側の送信処理を必ず呼ぶ
+                });
+            }
+            else                                                                      // どちらかが未設定の場合のログ
+            {
+                Debug.LogWarning("[GameManager] playerSendButton または view がInspectorで設定されていません。"); //
+            }
 
 
 

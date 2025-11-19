@@ -49,8 +49,31 @@ MonoBehaviour:
   convSubmit: {fileID: 0}
   talkCanvas: {fileID: 0}
   talkText: {fileID: 0}
+  talkContentRoot: {fileID: 0}
+  playerBubblePrefab: {fileID: 0}
+  aiBubblePrefab: {fileID: 0}
+  leftEdgePadding: 8
+  rightEdgePadding: 8
+  rowTopBottom: 4
+  talkScroll: {fileID: 0}
+  SentenceLimit: 30
   quesText: {fileID: 0}
   ansA: {fileID: 0}
   ansB: {fileID: 0}
   ansC: {fileID: 0}
   ansSubmit: {fileID: 0}
+  playerInputField: {fileID: 0}
+  playerSendButton: {fileID: 0}
+  view: {fileID: 0}
+  backButton: {fileID: 0}
+  iconTable:
+  - speaker: A
+    sprite: {fileID: 4352327113505697815, guid: cd624e5bc16926f4e82280bd8fce632b, type: 3}
+  - speaker: B
+    sprite: {fileID: 3619869847444629993, guid: 8be8038c61116f14894425299c4fed6d, type: 3}
+  - speaker: C
+    sprite: {fileID: 8672371969711660065, guid: a70df8d0018805f4a99304996fa45c7b, type: 3}
+  - speaker: "\u30D7\u30EC\u30A4\u30E4\u30FC"
+    sprite: {fileID: -7324307166655007979, guid: b532eb39dc585d549a12d34dd0baab0b, type: 3}
+  defaultIcon: {fileID: -3969344145657503212, guid: 4b870f4fa01bf5c4b94115c5e685a16c, type: 3}
+  iconSize: 96

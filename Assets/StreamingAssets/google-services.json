@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "944948911933",
+    "project_id": "digicon-aideathgame",
+    "storage_bucket": "digicon-aideathgame.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:944948911933:android:48c1c65020fc599a3b6f54",
+        "android_client_info": {
+          "package_name": "com.OkosamaLunch.AiDeathGame"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBdgfBD5NKfUY3TzrdkSsdVwm6gHWTqQXo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -11,6 +11,8 @@ namespace MyScripts.Component
 
         [SerializeField] private TextMeshProUGUI _outputText;
 
+        [SerializeField] private Button _sendButton;
+
         public event Action<IViewData> OnSend;                 // メッセージ送信を外部に知らせるイベント
 
         private sealed class ViewData : IViewData                 
@@ -33,6 +35,65 @@ namespace MyScripts.Component
                 _outputText.text = input.Message;                 // 受け取ったメッセージ本文を画面に表示
             }
         }
+
+        private void Awake()                                                // 最初に一度だけUI設定を行う
+        {
+
+            if (_inputField != null)                                       // InputFieldが設定されているか確認
+            {
+                _inputField.lineType = TMP_InputField.LineType.MultiLineNewline; // 複数行入力を許可
+
+                var tmp = _inputField;                                     // 参照を短い変数にコピー
+
+                if (tmp.textComponent != null)                             // 実際に文字を表示するText部分を取得
+                {
+                    var t = tmp.textComponent;                             // TextMeshProの本体
+                    t.textWrappingMode = TMPro.TextWrappingModes.Normal;   // 自動改行を有効化
+
+                    t.overflowMode = TMPro.TextOverflowModes.Masking;      // 枠からはみ出した部分をマスク
+                }
+
+                if (tmp.textViewport != null)                              // 入力部分のビュー（表示枠）を取得
+                {
+                    var m = tmp.textViewport.GetComponent<RectMask2D>();   // マスク用コンポーネントを探す
+                    if (m == null) m = tmp.textViewport.gameObject.AddComponent<RectMask2D>(); // 無ければ追加
+
+                    m.enabled = true;                                      // マスクを有効化
+                }
+
+                _inputField.onSubmit.RemoveAllListeners();                 // 既存のSubmitイベントを全て解除
+
+                _inputField.onValidateInput += (text, index, ch) =>        // 入力文字のバリデーション設定
+                {
+                    if (ch == '\n' || ch == '\r' || ch == '\t') return '\0'; // 改行・タブを無効化
+
+                    return ch;                                             // それ以外の文字はそのまま許可
+                };
+
+                var nav = _inputField.navigation;                          // UIナビゲーション設定を取得
+
+                nav.mode = Navigation.Mode.None;                           // Tabなどでフォーカスを移動させない
+
+                _inputField.navigation = nav;                              // 変更した設定を反映
+            }
+
+            if (_sendButton != null)                                       // 送信ボタンが設定されているか確認
+            {
+                var navBtn = _sendButton.navigation;                       // ボタンのナビゲーション設定を取得
+                navBtn.mode = Navigation.Mode.None;                        // 矢印キーなどでフォーカス移動させない
+
+                _sendButton.navigation = navBtn;                           // 変更を適用
+
+                _sendButton.onClick.RemoveAllListeners();                  // 既存のOnClickを一度クリア
+
+                _sendButton.onClick.AddListener(OnSendToPresenter);        // クリック時に自分の送信処理を呼ぶ
+            }
+            else
+            {
+                Debug.LogWarning("[View] _sendButton が設定されていません。"); // 設定漏れの警告
+            }
+        }
+
 
         private IViewData GetViewData()
         {

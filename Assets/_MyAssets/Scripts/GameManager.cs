@@ -597,40 +597,8 @@ namespace MyScripts
             }
 
 
-            if (playerInputField != null)
-            {                                                                
-
-                playerInputField.lineType = TMP_InputField.LineType.MultiLineNewline;                       
-                playerInputField.onSubmit.RemoveAllListeners();                                             
-                playerInputField.onValidateInput += (text, index, ch) => {                                  
-                    if (ch == '\n' || ch == '\r' || ch == '\t') return '\0';                                
-
-                    return ch;                                                                              
-                };
-
-                var nav = playerInputField.navigation;                                                      // UIナビゲーション設定の取得
-
-                if (playerSendButton != null)                                           // 送信ボタンのナビゲーションを無効化
-                {
-                    var navBtn = playerSendButton.navigation;                            // 現在のナビ設定を取得
-                    navBtn.mode = Navigation.Mode.None;                                  // ナビゲーションを無効
-                    playerSendButton.navigation = navBtn;                                // 設定を反映
-                }
 
 
-                nav.mode = Navigation.Mode.None;                                                            // Tabでフォーカスを移動させない
-                playerInputField.navigation = nav;                                                          // 変更を適用
-            }
-
-            if (playerSendButton != null && view != null)                             // ボタンとViewの両方が設定されているか確認
-            {
-                playerSendButton.onClick.RemoveAllListeners();                        // 既存のOnClick登録を一度クリア
-
-                playerSendButton.onClick.AddListener(() =>                            // クリック時の処理を新しく登録
-                {
-                    view.OnSendToPresenter();                                         // View側の送信処理を必ず呼ぶ
-                });
-            }
             else                                                                      // どちらかが未設定の場合のログ
             {
                 Debug.LogWarning("[GameManager] playerSendButton または view がInspectorで設定されていません。"); //

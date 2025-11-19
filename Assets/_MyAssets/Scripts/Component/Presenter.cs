@@ -16,13 +16,13 @@ namespace MyScripts.Component
         public void OnSendFromView(IViewData input)
         {
             var modelData = ViewToModel(input);
-            _model.OnSendFromPresenter(modelData);
+            Model.OnSendFromPresenter(modelData);
         }
 
         public void OnSendFromModel(IModelData input)
         {
             var viewData = ModelToView(input);
-            _view.OnSendFromPresenter(viewData);
+            View.OnSendFromPresenter(viewData);
         }
     }
 }

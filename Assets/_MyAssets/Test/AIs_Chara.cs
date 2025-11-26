@@ -3,7 +3,7 @@ using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using MyScripts.Common;
-using Firebase.AI;
+//using Firebase.AI;
 
 [CreateAssetMenu(fileName = "CharacterAI", menuName = "AI/CharacterAI")]
 
@@ -107,4 +107,7 @@ public class AIs_Chara : ScriptableObject
         }
         return o;
     }
+
+
+
 }

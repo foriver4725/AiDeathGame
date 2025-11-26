@@ -2758,6 +2758,7 @@ MonoBehaviour:
   _presenter: {fileID: 2103962142}
   _inputField: {fileID: 1413903649}
   _outputText: {fileID: 0}
+  _sendButton: {fileID: 0}
 --- !u!4 &445775814
 Transform:
   m_ObjectHideFlags: 0

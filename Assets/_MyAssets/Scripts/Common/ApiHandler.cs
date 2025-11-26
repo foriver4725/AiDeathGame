@@ -1,52 +1,75 @@
-using System.Collections.ObjectModel;                                   // コレクション系の型を使うためのusing
+using Firebase;
+using Firebase.AI;
 
-using Cysharp.Threading.Tasks;                                          // UniTaskを使うためのusing
+namespace MyScripts.Common;
 
-using UnityEngine;                                                      // Debug.Logなどを使うためのusing
-
-namespace MyScripts.Common                                              // プロジェクト用の名前空間
+public static class ApiHandler
 {
-    public static class ApiHandler                                     // Firebaseなし環境用の簡易ApiHandlerクラス
+    private static readonly string ModelName = "gemini-2.0-flash";
+    private static readonly string UserRoleName = "user";
+    private static readonly string ModelRoleName = "model";
+
+    private static GenerativeModel model = null;
+    private static readonly List<ModelContent> sessionHistory = new(256);
+
+    private static ReadOnlyCollection<ModelContent> SessionHistoryCached = null;
+    public static ReadOnlyCollection<ModelContent> SessionHistory => SessionHistoryCached ??= new(sessionHistory);
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void Init()
     {
-        private static readonly System.Collections.Generic.List<string> sessionHistory
-            = new System.Collections.Generic.List<string>(256);        // 会話履歴を入れるための簡易List
+        // Geminiモデルの呼び出し
+        var ai = FirebaseAI.GetInstance(FirebaseAI.Backend.GoogleAI());
+        model = ai.GetGenerativeModel(modelName: ModelName);
+    }
 
-        private static ReadOnlyCollection<string> _sessionHistoryCached = null; // キャッシュ用の変数
+    /// <summary>
+    /// セッション履歴をリセットして、新しく会話を始める.
+    /// </summary>
+    public static void StartNewSession()
+    {
+        sessionHistory.Clear();
+    }
 
-        public static ReadOnlyCollection<string> SessionHistory        // 履歴を外部に公開するプロパティ
-            => _sessionHistoryCached ??= new ReadOnlyCollection<string>(sessionHistory);
-
-        /// <summary>
-        /// セッション履歴をリセットして、新しく会話を始める.
-        /// </summary>
-        public static void StartNewSession()                            // 会話履歴をリセットするメソッド
+    /// <summary>
+    /// セッション内の履歴を踏まえて、会話を続ける.
+    /// </summary>
+    public static async UniTask<(bool, string)> AskAsync(string prompt, Ct ct)
+    {
+        // 生成AIにリクエストを投げ、レスポンスを受け取る
+        try
         {
-            sessionHistory.Clear();                                     // これまでの履歴を全部消す
+            if (model == null)
+                throw new InvalidOperationException("APIモデルが初期化されていません。");
+
+            if (string.IsNullOrWhiteSpace(prompt))
+                throw new ArgumentException("プロンプトが空または無効です。", nameof(prompt));
+
+            // セッション履歴にプロンプトを追加
+            sessionHistory.Add(new ModelContent(
+                UserRoleName,
+                new ModelContent.Part[] { new ModelContent.TextPart(prompt) }
+            ));
+
+            // プロンプトを送信、返答を受け取る
+            var response = await model.GenerateContentAsync(sessionHistory, ct).AsUniTask();
+            string responseText = response.Text;
+
+            // レスポンスをセッション履歴に追加
+            sessionHistory.Add(new ModelContent(
+                ModelRoleName,
+                new ModelContent.Part[] { new ModelContent.TextPart(responseText) }
+            ));
+
+            if (string.IsNullOrWhiteSpace(responseText))
+                throw new Exception("APIからのレスポンスが空です。");
+
+            return (true, responseText);
         }
-
-        /// <summary>
-        /// セッション内の履歴を踏まえて、会話を続ける(ダミー版).
-        /// </summary>
-        public static async UniTask<(bool, string)> AskAsync(string prompt, System.Threading.CancellationToken ct)
-        // AIに質問するためのダミーメソッド(本物のAPI呼び出しはしない)
+        catch (Exception e)
         {
-            if (string.IsNullOrWhiteSpace(prompt))                      // 空文字かどうかをチェック
-            {
-                Debug.LogWarning("[ApiHandler] プロンプトが空なので、空の結果を返します。"); // 注意ログ
-
-                return (false, string.Empty);                           // 失敗フラグと空文字を返す
-            }
-
-            sessionHistory.Add(prompt);                                 // とりあえず履歴リストにプロンプトを保存
-
-            await UniTask.Yield();                                      // 非同期っぽさを保つために1フレーム待つ
-
-            Debug.LogWarning("[ApiHandler] Firebase AI が導入されていないため、ダミー応答を返します。");
-            // 本物のAIと通信していないことをコンソールに表示
-
-            string dummyResponse = string.Empty;                        // ダミーの返事(今回は空文字)
-
-            return (false, dummyResponse);                              // 「失敗」として空文字を返す
+            Debug.LogWarning($"API呼び出し中にエラーが発生しました: {e.Message}");
+            return (false, string.Empty);
         }
     }
 }
